@@ -5,7 +5,7 @@
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)
 ![Tailwind CSS v4](https://img.shields.io/badge/Tailwind-v4-38bdf8?logo=tailwindcss&logoColor=white)
-[![Live Demo](https://img.shields.io/badge/live-demo-22c55e?logo=vercel&logoColor=white)](https://injection-testbench.vercel.app)
+[![Live Demo](https://img.shields.io/badge/live-demo-22c55e?logo=vercel&logoColor=white)](https://injection-testbench.davidcjw.com)
 
 A research playground for **prompt-injection attacks and defenses**. Paste a
 system prompt, toggle defense layers, and fire a corpus of injection attacks at
@@ -26,7 +26,7 @@ defenses actually move the attack-success-rate (ASR) for each class.
 </p>
 <p align="center"><em>Dark security-lab UI · per-category ASR matrix · canary vs. judge</em></p>
 
-<p align="center"><strong><a href="https://injection-testbench.vercel.app">▶ Try the live demo</a></strong> — bring your own Anthropic API key (it never leaves your browser except to run the eval).</p>
+<p align="center"><strong><a href="https://injection-testbench.davidcjw.com">▶ Try the live demo</a></strong> — bring your own Anthropic API key (it never leaves your browser except to run the eval).</p>
 
 ## Contents
 
