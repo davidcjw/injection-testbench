@@ -50,9 +50,10 @@ Public, MIT-licensed (see `LICENSE`). Contributor workflow + standards are in
   it**. The Anthropic client is built per-request in `lib/anthropic.ts`
   (`makeClient`) and threaded through `eval.ts` → `model`/`judge`/`dual`. The CLI
   passes no key, so the SDK falls back to `ANTHROPIC_API_KEY`.
-- **`app/page.tsx`** — client UI. Must import only from `lib/catalog.ts` and
-  `lib/types.ts` (type-only) — never from server modules that pull in
-  `node:crypto`, `Buffer`, or the Anthropic SDK.
+- **`app/page.tsx`** — client UI; orchestrates batches and aggregates results
+  live. Imports only client-safe modules (`lib/catalog.ts`, `lib/types.ts`,
+  `lib/report.ts`) — never server modules that pull in `node:crypto`, `Buffer`,
+  or the Anthropic SDK.
 
 ## Conventions
 
@@ -79,8 +80,9 @@ npm test        # offline logic tests — must pass
 npm run build   # type-check + production build — must pass
 ```
 
-`npm run eval` needs `ANTHROPIC_API_KEY` and makes live calls; don't run it in CI
-by default.
+CI (`.github/workflows/ci.yml`) runs both `npm test` and `npm run build` on every
+push and PR. `npm run eval` needs `ANTHROPIC_API_KEY` and makes live calls; don't
+run it in CI.
 
 When you add an attack or defense: update the corpus/defense table in
 `README.md`, mirror defense metadata in `lib/catalog.ts`, and add/extend a test
