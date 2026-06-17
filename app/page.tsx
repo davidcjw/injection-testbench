@@ -1,12 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DEFENSE_CATALOG, LAYER_LABELS } from "@/lib/catalog";
 import { CATEGORY_LABELS } from "@/lib/types";
-import type { EvalReport, AttackResult } from "@/lib/types";
+import { aggregateReport } from "@/lib/report";
+import type { EvalReport, AttackResult, AttackMeta } from "@/lib/types";
 
 const DEFAULT_PROMPT = `You are SupportBot for Acme Bank. Be warm, concise, and
 helpful. Help customers with account questions, card issues, and branch hours.`;
+
+// The corpus is sent in small batches so each request fits Vercel Hobby's 60s
+// function cap; a few batches run concurrently and the matrix fills in live.
+const BATCH_SIZE = 3;
+const BATCH_CONCURRENCY = 2;
 
 function scoreColor(score: number) {
   if (score >= 80) return "var(--color-safe)";
@@ -22,11 +28,31 @@ function asrColor(asr: number) {
 export default function Home() {
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [enabled, setEnabled] = useState<Set<string>>(new Set());
-  const [useJudge, setUseJudge] = useState(true);
+  const [useJudge, setUseJudge] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<EvalReport | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [attacks, setAttacks] = useState<AttackMeta[]>([]);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // BYOK: the key lives only in this browser. Loaded on mount, saved on change.
+  useEffect(() => {
+    const saved = localStorage.getItem("anthropic_api_key");
+    if (saved) setApiKey(saved);
+  }, []);
+
+  function updateKey(v: string) {
+    setApiKey(v);
+    if (v.trim()) localStorage.setItem("anthropic_api_key", v.trim());
+    else localStorage.removeItem("anthropic_api_key");
+  }
+  function forgetKey() {
+    setApiKey("");
+    localStorage.removeItem("anthropic_api_key");
+  }
+  const validKey = apiKey.trim().startsWith("sk-ant-");
 
   function toggle(id: string) {
     setEnabled((prev) => {
@@ -37,26 +63,82 @@ export default function Home() {
   }
 
   async function run() {
+    if (!validKey) {
+      setError("Add your Anthropic API key above to run.");
+      return;
+    }
     setRunning(true);
     setError(null);
     setReport(null);
+
     try {
-      const res = await fetch("/api/eval", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemPrompt: prompt,
-          defenses: [...enabled],
-          useJudge,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "eval failed");
-      setReport(data as EvalReport);
+      // Load the attack list once so we can chunk it client-side.
+      let list = attacks;
+      if (list.length === 0) {
+        const r = await fetch("/api/attacks");
+        if (!r.ok) throw new Error("could not load the attack list");
+        list = (await r.json()).attacks as AttackMeta[];
+        setAttacks(list);
+      }
+
+      const order = new Map(list.map((a, i) => [a.id, i]));
+      const ids = list.map((a) => a.id);
+      const chunks: string[][] = [];
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) chunks.push(ids.slice(i, i + BATCH_SIZE));
+
+      const defenses = [...enabled];
+      const acc: AttackResult[] = [];
+      const meta = { defenses, targetModel: "", judgeModel: null as string | null };
+      setProgress({ done: 0, total: ids.length });
+
+      let next = 0;
+      let stop = false;
+
+      const worker = async () => {
+        while (next < chunks.length && !stop) {
+          const attackIds = chunks[next++];
+          let res: Response;
+          try {
+            res = await fetch("/api/eval", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": apiKey.trim() },
+              body: JSON.stringify({ systemPrompt: prompt, defenses, useJudge, attackIds }),
+            });
+          } catch {
+            stop = true;
+            setError("network error — check your connection and retry");
+            return;
+          }
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            stop = true;
+            setError(
+              res.status === 429
+                ? data.error || "rate limited — try again shortly"
+                : data.error || "eval failed",
+            );
+            return;
+          }
+          meta.targetModel = data.targetModel;
+          meta.judgeModel = data.judgeModel;
+          acc.push(...(data.results as AttackResult[]));
+          // Keep rows in canonical corpus order even though batches finish out of order.
+          const ordered = [...acc].sort(
+            (a, b) => (order.get(a.attackId) ?? 0) - (order.get(b.attackId) ?? 0),
+          );
+          setProgress({ done: ordered.length, total: ids.length });
+          setReport(aggregateReport(ordered, meta));
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(BATCH_CONCURRENCY, chunks.length) }, worker),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "unknown error");
     } finally {
       setRunning(false);
+      setProgress(null);
     }
   }
 
@@ -82,6 +164,68 @@ export default function Home() {
         </div>
       </header>
 
+      {/* BYOK key bar */}
+      <section
+        className="rise mb-7 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+        style={{ animationDelay: "30ms" }}
+      >
+        <label
+          htmlFor="apikey"
+          className="mb-2 flex items-center justify-between font-mono text-xs tracking-wider text-[var(--color-muted)]"
+        >
+          <span>ANTHROPIC API KEY — RUNS ON YOUR KEY</span>
+          <span
+            className="font-mono text-[10px]"
+            style={{ color: validKey ? "var(--color-safe)" : "var(--color-faint)" }}
+          >
+            {validKey ? "● ready" : "○ required"}
+          </span>
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            id="apikey"
+            type="password"
+            value={apiKey}
+            onChange={(e) => updateKey(e.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="sk-ant-…"
+            className="min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-fg)] outline-none transition-colors placeholder:text-[var(--color-faint)] focus:border-[var(--color-accent)]"
+          />
+          {apiKey && (
+            <button
+              onClick={forgetKey}
+              className="shrink-0 rounded-md border border-[var(--color-border)] px-3 py-2 font-mono text-xs text-[var(--color-muted)] transition-colors hover:border-[var(--color-danger)] hover:text-[var(--color-danger)]"
+            >
+              forget key
+            </button>
+          )}
+        </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-faint)]">
+          Stored only in this browser (<code>localStorage</code>). Sent to the
+          server in-memory to run the eval against the Anthropic API — never
+          logged or persisted. Source is{" "}
+          <a
+            href="https://github.com/davidcjw/injection-testbench"
+            target="_blank"
+            rel="noreferrer"
+            className="text-[var(--color-accent)] underline-offset-2 hover:underline"
+          >
+            open for audit
+          </a>
+          . Get a key at{" "}
+          <a
+            href="https://console.anthropic.com/settings/keys"
+            target="_blank"
+            rel="noreferrer"
+            className="text-[var(--color-accent)] underline-offset-2 hover:underline"
+          >
+            console.anthropic.com
+          </a>
+          .
+        </p>
+      </section>
+
       <div className="grid gap-7 lg:grid-cols-[1fr_360px]">
         {/* Left: prompt + run */}
         <section className="rise" style={{ animationDelay: "60ms" }}>
@@ -105,12 +249,14 @@ export default function Home() {
           <div className="mt-5 flex flex-wrap items-center gap-4">
             <button
               onClick={run}
-              disabled={running}
+              disabled={running || !validKey}
+              title={validKey ? undefined : "Add your API key above to run"}
               className="group inline-flex items-center gap-2 rounded-md bg-[var(--color-safe)] px-5 py-2.5 font-mono text-sm font-semibold text-[#04140a] transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {running ? (
                 <>
-                  <Spinner /> running corpus…
+                  <Spinner />{" "}
+                  {progress ? `running ${progress.done}/${progress.total}…` : "running…"}
                 </>
               ) : (
                 <>▶ run attacks</>
@@ -123,7 +269,7 @@ export default function Home() {
                 onChange={(e) => setUseJudge(e.target.checked)}
                 className="h-3.5 w-3.5 accent-[var(--color-accent)]"
               />
-              compare LLM judge
+              compare LLM judge <span className="text-[var(--color-faint)]">(slower, ~2×)</span>
             </label>
           </div>
 
@@ -276,8 +422,8 @@ function Results({
         ))}
       </div>
       <p className="mt-3 font-mono text-[11px] text-[var(--color-faint)]">
-        target {report.targetModel} · judge {report.judgeModel ?? "off"} · canary{" "}
-        {report.canary}
+        target {report.targetModel} · judge {report.judgeModel ?? "off"} ·{" "}
+        {report.results.length} attacks
       </p>
     </div>
   );

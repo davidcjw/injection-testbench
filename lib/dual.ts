@@ -1,11 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { TARGET_MODEL } from "./model";
-
-let _client: Anthropic | null = null;
-function client(): Anthropic {
-  if (!_client) _client = new Anthropic();
-  return _client;
-}
 
 /** The quarantined LLM can be a cheaper model — it has no authority, so its
  *  capability matters less. Defaults to the target model. */
@@ -40,9 +34,12 @@ const SCHEMA = {
  * hijack. Its output is constrained to a fixed schema (data, never commands),
  * which is what the privileged model later consumes.
  */
-export async function quarantine(content: string): Promise<QuarantineResult> {
+export async function quarantine(
+  client: Anthropic,
+  content: string,
+): Promise<QuarantineResult> {
   try {
-    const res = await client().messages.create({
+    const res = await client.messages.create({
       model: QUARANTINE_MODEL,
       max_tokens: 600,
       system:

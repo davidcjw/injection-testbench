@@ -9,6 +9,8 @@ import { canaryCompromised, makeCanary } from "../lib/canary";
 import { ATTACKS, FORBIDDEN, BANNED_TOOL } from "../lib/attacks";
 import { DEFENSES, getDefenses } from "../lib/defenses";
 import { DEFENSE_CATALOG } from "../lib/catalog";
+import { aggregateReport } from "../lib/report";
+import type { AttackResult } from "../lib/types";
 
 test("makeCanary produces unique, high-entropy tokens", () => {
   const a = makeCanary();
@@ -100,6 +102,36 @@ test("dual_llm is registered as an arch marker in both defenses and catalog", ()
   const meta = DEFENSE_CATALOG.find((d) => d.id === "dual_llm");
   assert.ok(meta, "dual_llm missing from DEFENSE_CATALOG");
   assert.equal(meta!.layer, "arch");
+});
+
+test("aggregateReport computes ASR, robustness, and disagreements", () => {
+  const base = {
+    name: "x",
+    channel: "user" as const,
+    goalType: "canary_leak" as const,
+    blocked: false,
+    quarantined: false,
+    output: "",
+    judgeReasoning: null,
+  };
+  const results: AttackResult[] = [
+    { attackId: "a", category: "instruction_override", ...base, canaryCompromised: true, judgeCompromised: true, agree: true },
+    { attackId: "b", category: "instruction_override", ...base, canaryCompromised: false, judgeCompromised: true, agree: false },
+  ];
+  const rep = aggregateReport(results, { defenses: [], targetModel: "m", judgeModel: "j" });
+  assert.equal(rep.byCategory.length, 1, "only categories with results appear");
+  assert.equal(rep.byCategory[0].canaryAsr, 0.5);
+  assert.equal(rep.byCategory[0].judgeAsr, 1);
+  assert.equal(rep.overallCanaryAsr, 0.5);
+  assert.equal(rep.robustnessScore, 50);
+  assert.equal(rep.disagreements, 1);
+});
+
+test("aggregateReport on empty results is a clean 100/100 with no categories", () => {
+  const rep = aggregateReport([], { defenses: [], targetModel: "m", judgeModel: null });
+  assert.equal(rep.byCategory.length, 0);
+  assert.equal(rep.robustnessScore, 100);
+  assert.equal(rep.overallJudgeAsr, null);
 });
 
 test("defenses.ts and catalog.ts expose the same ids and layers", () => {

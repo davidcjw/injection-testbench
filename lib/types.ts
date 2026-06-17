@@ -103,8 +103,22 @@ export interface CategoryStat {
   judgeAsr: number | null;
 }
 
+/** Client-safe attack metadata (no payload builders) — served by GET
+ *  /api/attacks so the browser can chunk the corpus into batches and render
+ *  pending rows without importing server-only code. */
+export interface AttackMeta {
+  id: string;
+  category: AttackCategory;
+  name: string;
+  channel: AttackChannel;
+  why: string;
+  goalType: AttackGoal["type"];
+}
+
 export interface EvalReport {
-  canary: string;
+  /** The secret for a single run. With client-side batching each batch rotates
+   *  its own canary, so the aggregated report omits it. */
+  canary?: string;
   targetModel: string;
   judgeModel: string | null;
   defenses: string[];

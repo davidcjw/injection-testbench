@@ -109,13 +109,19 @@ without breaking the assistant. Rows that went through the sandbox are badged
 
 ```bash
 npm install
-cp .env.example .env        # add your ANTHROPIC_API_KEY
 npm run dev                 # open http://localhost:3000
 ```
+
+**Bring your own key.** The web app runs entirely on *your* Anthropic API key —
+paste it in the UI and it's stored only in your browser (`localStorage`), sent
+to the server in-memory to run the eval, and **never logged or persisted**.
+Grab a key at [console.anthropic.com](https://console.anthropic.com/settings/keys).
+(The CLI below uses `ANTHROPIC_API_KEY` from your environment instead.)
 
 ### CLI (fast iteration loop)
 
 ```bash
+export ANTHROPIC_API_KEY=sk-ant-...            # or put it in .env
 npm run eval                                   # all attacks, no defenses, with judge
 npm run eval -- --defenses spotlighting,output_guard
 npm run eval -- --defenses dual_llm            # watch indirect-injection ASR drop
@@ -136,12 +142,34 @@ grading, input filtering, output redaction, and corpus integrity.
 
 ## Configuration
 
+The **web app requires a key pasted in the UI** (BYOK — there is no server-side
+key fallback). The env vars below apply to the **CLI** and to model selection:
+
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `ANTHROPIC_API_KEY` | — | required |
+| `ANTHROPIC_API_KEY` | — | required by the CLI (`npm run eval`); not used by the web app |
 | `TARGET_MODEL` | `claude-opus-4-8` | the model being attacked (the privileged model in dual mode) |
 | `JUDGE_MODEL` | `claude-opus-4-8` | the grader — set a weaker model to study a fool-able judge |
 | `QUARANTINE_MODEL` | `claude-opus-4-8` | the sandboxed LLM for the Dual-LLM defense (no secrets/tools) |
+| `UPSTASH_REDIS_REST_URL` | — | optional; enables per-IP rate limiting (see Deploying) |
+| `UPSTASH_REDIS_REST_TOKEN` | — | optional; paired with the URL above |
+
+### Deploying (Vercel Hobby-friendly)
+
+The app is built to run on a free Vercel Hobby plan:
+
+- **No server API key** — it's BYOK, so a public deploy never spends your
+  credits. Just deploy; visitors bring their own key.
+- **Fits the 60s function cap** — the browser sends the corpus to `/api/eval`
+  in small batches (`BATCH_SIZE = 3`), a couple at a time, and the matrix fills
+  in progressively. Each request stays well under Hobby's limit.
+- **Rate limiting** — set `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`
+  (free [Upstash Redis](https://upstash.com) database) to enable a per-IP
+  sliding-window limit on `/api/eval`, protecting your compute minutes. If the
+  vars are absent the limiter is a no-op (fine for local/self-host). Tune the
+  window in `lib/ratelimit.ts`.
+- **Judge off by default** — the LLM judge roughly doubles run time, so it's
+  opt-in via the UI toggle. The canary verdict (the ground truth) always runs.
 
 ## Stack
 
@@ -153,19 +181,23 @@ and `frontend-design` skills (OLED security-lab aesthetic).
 
 ```
 app/
-  page.tsx            playground UI (client)
-  api/eval/route.ts   runs the corpus server-side
+  page.tsx              playground UI — orchestrates batches, fills matrix live
+  api/eval/route.ts     runs a batch server-side (BYOK + rate limit)
+  api/attacks/route.ts  client-safe attack metadata for chunking
 lib/
-  attacks.ts          the attack corpus (documented)
-  defenses.ts         toggleable defense layers
-  dual.ts             dual-LLM quarantine (architectural defense)
-  model.ts            target-model call
-  judge.ts            LLM-judge call (structured output)
-  canary.ts           deterministic verdict
-  eval.ts             orchestration + ASR matrix
-  catalog.ts          client-safe defense metadata
-scripts/run-eval.ts   CLI harness
-tests/harness.test.ts offline tests
+  attacks.ts            the attack corpus (documented)
+  defenses.ts           toggleable defense layers
+  dual.ts               dual-LLM quarantine (architectural defense)
+  model.ts              target-model call
+  judge.ts              LLM-judge call (structured output)
+  canary.ts             deterministic verdict
+  anthropic.ts          per-request client factory (BYOK)
+  eval.ts               runBatch (subset) + runEval (CLI wrapper)
+  report.ts             pure ASR aggregation (client-safe, progressive)
+  ratelimit.ts          Upstash per-IP rate limit (no-op if unset)
+  catalog.ts            client-safe defense metadata
+scripts/run-eval.ts     CLI harness
+tests/harness.test.ts   offline tests
 ```
 
 ## Roadmap
