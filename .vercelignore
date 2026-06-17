@@ -1,0 +1,6 @@
+# Never upload local env files to Vercel (the web app is BYOK; secrets are not
+# needed at build or runtime). Git-connected deploys build from the repo, which
+# has no .env anyway — this guards manual `vercel` CLI deploys.
+.env
+.env.local
+.env.*.local
